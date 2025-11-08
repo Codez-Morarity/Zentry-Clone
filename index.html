@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Zentry</title>
+
+  <!-- Tailwind (via CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- GSAP Core + Plugins -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollToPlugin.min.js"></script>
+
+  <!-- Lenis -->
+  <script src="https://cdn.jsdelivr.net/gh/studio-freight/lenis@1.0.42/bundles/lenis.min.js"></script>
+
+  <!-- Three.js + React‑Three‑Fiber (CDN) -->
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+    import {OrbitControls} from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+    window.THREE = THREE;
+    window.OrbitControls = OrbitControls;
+  </script>
+  <script type="module" src="https://unpkg.com/@react-three/fiber@8.15.12/dist/react-three-fiber.umd.js"></script>
+  <script type="module" src="https://unpkg.com/@react-three/drei@9.88.11/dist/react-three-drei.umd.js"></script>
+
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body,#root{height:100%;overflow:hidden}
+    body{background:#000;color:#fff;font-family:'Inter',sans-serif}
+    canvas{display:block;position:absolute;top:0;left:0;z-index:0}
+    .cursor{position:fixed;width:30px;height:30px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.3);border-radius:50%;pointer-events:none;mix-blend-mode:difference;z-index:9999;transform:translate(-50%,-50%);}
+    .cursor-trail{position:fixed;width:8px;height:8px;background:#00ffff;border-radius:50%;pointer-events:none;opacity:0;z-index:9998;transform:translate(-50%,-50%);}
+    .gooey{filter:url(#gooey)}
+    .card-3d{transform-style:preserve-3d;transition:transform .6s}
+    .card-3d:hover{transform:rotateY(180deg)}
+    .card-back{transform:rotateY(180deg)}
+    .section-h{scroll-snap-align:start}
+  </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<!-- Preloader -->
+<div id="preloader" class="fixed inset-0 bg-black flex items-center justify-center z-[99999]">
+  <svg width="120" height="120" viewBox="0 0 100 100" class="animate-pulse">
+    <path d="M50,10 L70,35 L60,60 L40,60 L30,35 Z" fill="none" stroke="#00ffff" stroke-width="3"/>
+  </svg>
+</div>
+
+<!-- SVG Filters (Gooey) -->
+<svg width="0" height="0" class="absolute">
+  <defs>
+    <filter id="gooey">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur"/>
+      <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -8" result="goo"/>
+      <feComposite in="SourceGraphic" in2="goo" operator="over"/>
+    </filter>
+  </defs>
+</svg>
+
+<script type="module">
+  import { createRoot } from 'https://unpkg.com/react-dom@18.3.1/client.js';
+  import React, { useRef, useEffect, Suspense } from 'https://unpkg.com/react@18.3.1/index.js';
+  import { Canvas, useFrame, useThree } from 'https://unpkg.com/@react-three/fiber@8.15.12/dist/react-three-fiber.umd.js';
+  import { Float, Environment, MeshDistortMaterial } from 'https://unpkg.com/@react-three/drei@9.88.11/dist/react-three-drei.umd.js';
+
+  // -------------------------------------------------
+  // 3D HERO PARTICLES + MOUSE PARALLAX
+  // -------------------------------------------------
+  const Particles = () => {
+    const mesh = useRef();
+    const { mouse } = useThree();
+
+    useFrame((state, delta) => {
+      mesh.current.rotation.y += delta * 0.1;
+      mesh.current.rotation.x = mouse.y * 0.2;
+      mesh.current.rotation.y = mouse.x * 0.2;
+    });
+
+    const count = 800;
+    const positions = new Float32Array(count * 3);
+    const sizes = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      positions[i*3]   = (Math.random() - 0.5) * 15;
+      positions[i*3+1] = (Math.random() - 0.5) * 15;
+      positions[i*3+2] = (Math.random() - 0.5) * 15;
+      sizes[i] = Math.random() * 2 + 0.5;
+    }
+
+    return (
+      <points ref={mesh}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
+          <bufferAttribute attach="attributes-size" count={count} array={sizes} itemSize={1} />
+        </bufferGeometry>
+        <pointsMaterial size={0.06} color="#00ffff" transparent opacity={0.8} />
+      </points>
+    );
+  };
+
+  // -------------------------------------------------
+  // MAIN APP
+  // -------------------------------------------------
+  const App = () => {
+    const cursorRef = useRef();
+    const trails = useRef([]);
+
+    useEffect(() => {
+      // Lenis
+      const lenis = new Lenis({ duration: 1.4, easing: t => Math.min(1, 1.001 - Math.pow(2, -10 * t)) });
+      const raf = t => { lenis.raf(t); requestAnimationFrame(raf); };
+      requestAnimationFrame(raf);
+
+      // Cursor + trails
+      const cursor = cursorRef.current;
+      const trailArray = [];
+      for (let i = 0; i < 12; i++) {
+        const el = document.createElement('div');
+        el.className = 'cursor-trail';
+        document.body.appendChild(el);
+        trailArray.push(el);
+      }
+      trails.current = trailArray;
+
+      let mx = 0, my = 0;
+      document.addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; });
+      gsap.ticker.add(() => {
+        gsap.set(cursor, { x: mx, y: my });
+        trailArray.forEach((t, i) => {
+          gsap.set(t, { x: mx, y: my, scale: 1 - i*0.07, opacity: 1 - i*0.08 });
+        });
+      });
+
+      // Magnetic buttons
+      document.querySelectorAll('.magnetic').forEach(btn => {
+        btn.addEventListener('mousemove', e => {
+          const r = btn.getBoundingClientRect();
+          const x = (e.clientX - r.left - r.width/2) * 0.25;
+          const y = (e.clientY - r.top - r.height/2) * 0.25;
+          gsap.to(btn, { x, y, duration: .6, ease: 'power3.out' });
+        });
+        btn.addEventListener('mouseleave', () => gsap.to(btn, { x:0, y:0, duration: .6, ease: 'power3.out' }));
+      });
+
+      // Preloader
+      const tl = gsap.timeline();
+      tl.to('#preloader svg', { scale: 1.3, duration: .6, yoyo:true, repeat:1 })
+        .to('#preloader', { yPercent: -100, duration: 1, ease: 'power3.inOut' }, '+=0.3');
+
+      return () => lenis.destroy();
+    }, []);
+
+    return (
+      <>
+        {/* CURSOR */}
+        <div ref={cursorRef} className="cursor"></div>
+
+        {/* HERO */}
+        <section className="relative h-screen overflow-hidden">
+          <Canvas camera={{ position: [0,0,6], fov: 60 }}>
+            <Suspense fallback={null}>
+              <ambientLight intensity={0.6} />
+              <Particles />
+              <Float speed={2} rotationIntensity={1} floatIntensity={2}>
+                <mesh>
+                  <icosahedronGeometry args={[1.5, 0]} />
+                  <MeshDistortMaterial color="#00ffff" distort={0.3} speed={2} roughness={0} />
+                </mesh>
+              </Float>
+              <Environment preset="night" />
+            </Suspense>
+          </Canvas>
+
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-center z-10 px-6">
+            <h1 className="text-6xl md:text-9xl font-black tracking-tighter" data-split>ENTER ZENTRY</h1>
+            <p className="mt-4 text-lg md:text-2xl opacity-70 max-w-3xl">Infinite worlds. One playground. Play‑to‑evolve.</p>
+            <button className="mt-10 px-10 py-5 bg-white text-black font-bold rounded-full magnetic gooey hover:scale-110 transition">PLAY NOW</button>
+          </div>
+        </section>
+
+        {/* VIDEO MASK SECTION */}
+        <section className="relative h-screen bg-black clip-section overflow-hidden" data-scroll>
+          <video className="absolute inset-0 w-full h-full object-cover" loop muted playsInline autoPlay>
+            <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4" type="video/mp4"/>
+          </video>
+          <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-70"></div>
+          <div className="absolute bottom-12 left-12 md:left-20">
+            <h2 className="text-5xl md:text-8xl font-black text-white mix-blend-screen" data-split>REALITY REDEFINED</h2>
+          </div>
+        </section>
+
+        {/* 3D CARD GRID (horizontal scroll) */}
+        <section className="h-screen bg-gradient-to-b from-zinc-900 to-black flex items-center overflow-x-auto snap-x snap-mandatory section-h">
+          <div className="flex space-x-8 px-12 md:px-24">
+            {[1,2,3].map(i => (
+              <div key={i} className="relative w-80 h-96 card-3d perspective-1000 snap-center">
+                <div className="absolute inset-0 bg-gradient-to-br from-cyan-500 to-purple-600 rounded-3xl backface-hidden flex items-center justify-center p-8">
+                  <h3 className="text-3xl font-bold text-white">Feature {i}</h3>
+                </div>
+                <div className="card-back absolute inset-0 bg-gradient-to-br from-purple-600 to-pink-600 rounded-3xl backface-hidden flex items-center justify-center p-8">
+                  <p className="text-white text-center">Advanced description with animated stats and icons.</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* FINAL CTA */}
+        <section className="h-screen flex items-center justify-center bg-black">
+          <div className="text-center">
+            <h2 className="text-6xl md:text-9xl font-black" data-split>ARE YOU READY?</h2>
+            <button className="mt-12 px-14 py-6 bg-white text-black text-xl font-bold rounded-full magnetic gooey hover:scale-110 transition">JOIN ZENTRY</button>
+          </div>
+        </section>
+      </>
+    );
+  };
+
+  // -------------------------------------------------
+  // TEXT SPLIT + SCROLL REVEAL
+  // -------------------------------------------------
+  document.addEventListener('DOMContentLoaded', () => {
+    gsap.registerPlugin(ScrollTrigger);
+
+    // Split text
+    document.querySelectorAll('[data-split]').forEach(el => {
+      const txt = el.textContent;
+      el.innerHTML = txt.split('').map(c => `<span class="inline-block overflow-hidden"><span class="inline-block">${c===' '?'&nbsp;':c}</span></span>`).join('');
+    });
+
+    // Animate on scroll
+    gsap.utils.toArray('[data-split]').forEach(el => {
+      gsap.from(el.querySelectorAll('span > span'), {
+        y: '100%',
+        opacity: 0,
+        stagger: 0.03,
+        duration: 1.2,
+        ease: 'power4.out',
+        scrollTrigger: { trigger: el, start: 'top 80%', toggleActions: 'play none none reverse' }
+      });
+    });
+
+    // Video mask reveal
+    gsap.to('.clip-section', {
+      clipPath: 'polygon(0 0, 100% 0, 100% 100%, 0 100%)',
+      duration: 1.8,
+      ease: 'power3.inOut',
+      scrollTrigger: { trigger: '.clip-section', start: 'top 70%', toggleActions: 'play none none reverse' }
+    });
+
+    // Horizontal scroll snap (Lenis + GSAP)
+    const horiz = document.querySelector('.section-h');
+    if (horiz) {
+      ScrollTrigger.create({
+        trigger: horiz,
+        start: 'top top',
+        end: () => `+=${horiz.scrollWidth}`,
+        pin: true,
+        scrub: 1,
+        anticipatePin: 1,
+        onUpdate: self => {
+          gsap.to(horiz, { x: -self.progress * (horiz.scrollWidth - window.innerWidth), ease: 'none' });
+        }
+      });
+    }
+  });
+
+  // -------------------------------------------------
+  // RENDER
+  // -------------------------------------------------
+  const root = createRoot(document.getElementById('root'));
+  root.render(<App />);
+</script>
+
+</body>
+</html>
